@@ -1,0 +1,876 @@
+Imports MySql.Data.MySqlClient
+Imports System.Data.OleDb
+Imports System.Globalization
+Imports System.IO
+Imports System.Security.Cryptography
+
+
+Public Class EDITprod
+    Private Shared random As New Random()
+    Private GeneratedCodes As New HashSet(Of String)()
+    Private Shared ReadOnly _random As New RNGCryptoServiceProvider()
+    Private ProductBarcodesTable As DataTable
+
+    Public Sub UpdateCategoryComboBox()
+        Dim folderPath As String = lode.ListView1.SelectedItems(0).SubItems(0).Text
+        Dim config As New ServerConfig()
+        config.LoadFromConfigFile(folderPath)
+        Dim connectionString As String = config.GetConnectionString(True)
+        Try
+            Using connection As New MySqlConnection(connectionString)
+                connection.Open()
+
+                ' استعلام جلب الفئات
+                Dim selectCategoriesQuery As String = "SELECT category_id, category_name FROM categories"
+                ' استعلام جلب الوحدات
+                Dim selectUnitsQuery As String = "SELECT unit_id, unit_name FROM units"
+                ' استعلام جلب الماركات
+                Dim selectBrandsQuery As String = "SELECT brand_id, brand_name FROM brands"
+                ' استعلام جلب الموردين
+                Dim selectSuppliersQuery As String = "SELECT SupplierID, SupplierName FROM Suppliers"
+                ' استعلام جلب المنتجات
+
+                ' جلب الفئات
+                Using command As New MySqlCommand(selectCategoriesQuery, connection)
+                    Using reader As MySqlDataReader = command.ExecuteReader()
+                        ComboBoxCategories.Items.Clear()
+                        While reader.Read()
+                            Dim item As New ComboBoxItem(reader("category_name").ToString(), reader("category_id"))
+                            ComboBoxCategories.Items.Add(item)
+                        End While
+                    End Using
+                End Using
+
+                ' تحديد أول عنصر في ComboBox الفئات
+                If ComboBoxCategories.Items.Count > 0 Then
+                    ComboBoxCategories.SelectedIndex = 0
+                End If
+
+                ' جلب الوحدات
+                Using command As New MySqlCommand(selectUnitsQuery, connection)
+                    Using reader As MySqlDataReader = command.ExecuteReader()
+                        ComboBoxUnits.Items.Clear()
+                        While reader.Read()
+                            Dim item As New ComboBoxItem(reader("unit_name").ToString(), reader("unit_id"))
+                            ComboBoxUnits.Items.Add(item)
+                        End While
+                    End Using
+                End Using
+
+                ' تحديد أول عنصر في ComboBox الوحدات
+                If ComboBoxUnits.Items.Count > 0 Then
+                    ComboBoxUnits.SelectedIndex = 0
+                End If
+
+                Using command As New MySqlCommand(selectBrandsQuery, connection)
+                    Using reader As MySqlDataReader = command.ExecuteReader()
+                        ComboBoxBrands.Items.Clear()
+                        While reader.Read()
+                            Dim item As New ComboBoxItem(reader("brand_name").ToString(), reader("brand_id"))
+                            ComboBoxBrands.Items.Add(item)
+                        End While
+                    End Using
+                End Using
+
+                ' تحديد أول عنصر في ComboBox الماركات
+                If ComboBoxBrands.Items.Count > 0 Then
+                    ComboBoxBrands.SelectedIndex = 0
+                End If
+
+                Using command As New MySqlCommand(selectSuppliersQuery, connection)
+                    Using reader As MySqlDataReader = command.ExecuteReader()
+                        ComboBoxSuppliers.Items.Clear()
+                        While reader.Read()
+                            Dim item As New ComboBoxItem(reader("SupplierName").ToString(), reader("SupplierID"))
+                            ComboBoxSuppliers.Items.Add(item)
+                        End While
+                    End Using
+                End Using
+
+                ' تحديد أول عنصر في ComboBox الموردين
+                If ComboBoxSuppliers.Items.Count > 0 Then
+                    ComboBoxSuppliers.SelectedIndex = 0
+                End If
+
+            End Using
+        Catch ex As Exception
+            MessageBox.Show($"حدث خطأ أثناء تحديث البيانات: {ex.Message}", "خطأ", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        End Try
+    End Sub
+    Private Sub MaskedTextBoxExpirationDate_Leave(sender As Object, e As EventArgs) Handles MaskedTextBoxExpirationDate.Leave
+        ' التحقق من صيغة التاريخ المدخل
+        Dim inputDate As String = MaskedTextBoxExpirationDate.Text
+        Dim dateFormat As String = "dd/MM/yyyy" ' صيغة التاريخ المتوقعة
+        Dim parsedDate As DateTime
+
+        ' استخدام TryParseExact للتحقق من صحة التاريخ المدخل
+        If Not DateTime.TryParseExact(inputDate, dateFormat, Nothing, Globalization.DateTimeStyles.None, parsedDate) Then
+            ' إذا كانت الصيغة غير صحيحة، إظهار رسالة تحذير
+            ' إذا كانت الصيغة غير صحيحة، يمكنك العودة إلى MaskedTextBox
+            MaskedTextBoxExpirationDate.Focus()
+        End If
+    End Sub
+    Private Function IsValidInput() As Boolean
+
+        ' تحقق من صحة المدخلات مثل الحقول الفارغة وصحة التاريخ والأسعار
+        If String.IsNullOrWhiteSpace(TextBoxProductName.Text) OrElse
+       String.IsNullOrWhiteSpace(TextBoxWholesalePrice.Text) OrElse
+       String.IsNullOrWhiteSpace(TextBoxSalePrice1.Text) OrElse
+       String.IsNullOrWhiteSpace(TextBoxStockQuantity.Text) Then
+            MessageBox.Show("يرجى ملء جميع الحقول.", "تحذير", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            Return False
+        End If
+
+        ' تحقق من صحة الأسعار
+        If Val(TextBoxSalePrice1.Text) <= Val(TextBoxWholesalePrice.Text) Then
+            MsgBox("سعر البيع الأول أقل من أو يساوي سعر البيع بالجملة.", MsgBoxStyle.Exclamation, "تحذير")
+            Return False
+        End If
+
+        ' تحقق من صحة التاريخ إذا كان مفعلاً
+        If ProfessionalToggleButton1.ToggleState Then
+            Dim inputDate As String = MaskedTextBoxExpirationDate.Text
+            Dim dateFormat As String = "dd/MM/yyyy"
+            Dim parsedDate As DateTime
+            If Not DateTime.TryParseExact(inputDate, dateFormat, Nothing, Globalization.DateTimeStyles.None, parsedDate) Then
+                MessageBox.Show("يرجى إدخال التاريخ بصيغة صحيحة (dd/MM/yyyy).", "خطأ", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+                Return False
+            End If
+        End If
+
+        Return True
+    End Function
+
+
+
+    ' دالة التحديث الرئيسية
+    Private Sub Button1_Click(sender As Object, e As EventArgs) Handles Button1.Click
+        If ValidateInputs() = False Then Return ' التحقق من صحة المدخلات
+
+        Try
+            ' الحصول على connection string
+            Dim folderPath As String = lode.ListView1.SelectedItems(0).SubItems(0).Text
+            Dim config As New ServerConfig()
+            config.LoadFromConfigFile(folderPath)
+            Dim connectionString As String = config.GetConnectionString(True)
+
+            ' استدعاء دالة التحديث
+            Dim productId As Integer
+            If Integer.TryParse(TextBox13.Text, productId) Then
+                If UpdateProduct(connectionString, productId) Then
+                    MessageBox.Show("تم تعديل المنتج بنجاح", "نجاح", MessageBoxButtons.OK, MessageBoxIcon.Information)
+                    Me.DialogResult = DialogResult.OK
+                    Me.Close()
+                End If
+            Else
+                MessageBox.Show("رقم المنتج غير صحيح", "خطأ", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            End If
+
+        Catch ex As Exception
+            MessageBox.Show("حدث خطأ أثناء تعديل المنتج: " & ex.Message, "خطأ", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        End Try
+    End Sub
+
+    ' دالة التحقق من صحة المدخلات
+    Private Function ValidateInputs() As Boolean
+        If String.IsNullOrWhiteSpace(TextBoxProductName.Text) Then
+            MessageBox.Show("يرجى إدخال اسم المنتج", "تنبيه", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            TextBoxProductName.Focus()
+            Return False
+        End If
+
+        If String.IsNullOrWhiteSpace(TextBoxWholesalePrice.Text) Then
+            MessageBox.Show("يرجى إدخال سعر الشراء", "تنبيه", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            TextBoxWholesalePrice.Focus()
+            Return False
+        End If
+
+        If String.IsNullOrWhiteSpace(TextBoxSalePrice1.Text) Then
+            MessageBox.Show("يرجى إدخال سعر البيع", "تنبيه", MessageBoxButtons.OK, MessageBoxIcon.Warning)
+            TextBoxSalePrice1.Focus()
+            Return False
+        End If
+
+
+
+        Return True
+    End Function
+
+    ' دالة مساعدة لتنظيف الأسعار
+    Private Function GetCleanPrice(price As String) As Decimal
+        Try
+            Return Convert.ToDecimal(price.Replace(" دج", "").Replace(",", "").Trim())
+        Catch ex As Exception
+            Return 0
+        End Try
+    End Function
+
+    ' دالة تحميل بيانات المنتج
+    Public Sub LoadProductData(productId As Integer)
+        ' التحقق من صحة رقم المنتج
+        If productId <= 0 Then
+            MessageBox.Show("رقم المنتج غير صحيح", "خطأ", MessageBoxButtons.OK, MessageBoxIcon.Error)
+            Return
+        End If
+
+        Try
+            ' الحصول على connection string
+            Dim folderPath As String = lode.ListView1.SelectedItems(0).SubItems(0).Text
+            Dim config As New ServerConfig()
+            config.LoadFromConfigFile(folderPath)
+            Dim connectionString As String = config.GetConnectionString(True)
+
+            Using connection As New MySqlConnection(connectionString)
+                connection.Open()
+
+                Dim productQuery As String = "SELECT * FROM Products WHERE ProductID = @productId"
+                Using productCommand As New MySqlCommand(productQuery, connection)
+                    productCommand.Parameters.AddWithValue("@productId", productId)
+
+                    Using reader As MySqlDataReader = productCommand.ExecuteReader()
+                        If reader.Read() Then
+                            ' البيانات الأساسية
+                            TextBox13.Text = reader("ProductID").ToString()
+                            TextBox15.Text = reader("product_ref").ToString()
+                            TextBoxProductName.Text = reader("ProductName").ToString()
+
+                            ' الأسعار
+                            TextBoxWholesalePrice.Text = If(reader("wholesale_price") IsNot DBNull.Value,
+                            String.Format("{0:N0}", Convert.ToDecimal(reader("wholesale_price"))) & " دج", "")
+                            TextBoxSalePrice1.Text = String.Format("{0:N0}", Convert.ToDecimal(reader("sale_price_1"))) & " دج"
+                            TextBoxSalePrice2.Text = If(reader("sale_price_2") IsNot DBNull.Value,
+                            String.Format("{0:N0}", Convert.ToDecimal(reader("sale_price_2"))) & " دج", "")
+                            TextBoxCartonPrice.Text = If(reader("carton_price") IsNot DBNull.Value,
+                            String.Format("{0:N0}", Convert.ToDecimal(reader("carton_price"))) & " دج", "")
+
+                            ' الكميات والتحذيرات
+                            TextBoxStockQuantity.Text = Convert.ToInt32(reader("StockQuantity")).ToString()
+                            TextBoxWarningQuantity.Text = If(reader("warning_quantity") IsNot DBNull.Value,
+                            Convert.ToInt32(reader("warning_quantity")).ToString(), "0")
+                            TextBoxWarningDays.Text = If(reader("warning_days") IsNot DBNull.Value,
+                            Convert.ToInt32(reader("warning_days")).ToString(), "0")
+
+                            ' التصنيفات والعلاقات
+                            ComboBoxCategories.SelectedValue = If(reader("category_id") IsNot DBNull.Value,
+                            Convert.ToInt32(reader("category_id")), -1)
+                            ComboBoxBrands.SelectedValue = Convert.ToInt32(reader("brand_id"))
+                            ComboBoxSuppliers.SelectedValue = Convert.ToInt32(reader("SupplierID"))
+                            ComboBoxUnits.SelectedValue = Convert.ToInt32(reader("unit_id"))
+
+                            ' الخيارات
+                            btnClothing.ToggleState = Convert.ToBoolean(reader("is_clothing"))
+                            btnWeightBased.ToggleState = Convert.ToBoolean(reader("is_weight_based"))
+                            btnStorable.ToggleState = Convert.ToBoolean(reader("is_storable"))
+                            btnSellable.ToggleState = Convert.ToBoolean(reader("is_sellable"))
+                            CheckBoxFavorite.Checked = Convert.ToBoolean(reader("is_favorite"))
+
+                            ' تاريخ الصلاحية
+                            If reader("expiration_date") IsNot DBNull.Value Then
+                                Dim expirationDate As DateTime = Convert.ToDateTime(reader("expiration_date"))
+                                MaskedTextBoxExpirationDate.Text = expirationDate.ToString("dd/MM/yyyy")
+                                ProfessionalToggleButton1.ToggleState = True
+                            Else
+                                MaskedTextBoxExpirationDate.Text = ""
+                                ProfessionalToggleButton1.ToggleState = False
+                            End If
+
+                            ' الصورة
+                            If reader("product_image") IsNot DBNull.Value Then
+                                Try
+                                    Dim imageBytes() As Byte = DirectCast(reader("product_image"), Byte())
+                                    Using ms As New MemoryStream(imageBytes)
+                                        PictureBox1.Image = Image.FromStream(ms)
+                                    End Using
+                                    TextBoxImagePath.Text = "تم تحميل الصورة"
+                                Catch ex As Exception
+                                    PictureBox1.Image = Nothing
+                                    TextBoxImagePath.Text = ""
+                                End Try
+                            Else
+                                PictureBox1.Image = Nothing
+                                TextBoxImagePath.Text = ""
+                            End If
+                        End If
+                    End Using
+                End Using
+
+                ' جلب أكواد الباركود
+                Dim barcodeQuery As String = "SELECT Barcode FROM ProductBarcodes WHERE ProductID = @productId"
+                Using barcodeCommand As New MySqlCommand(barcodeQuery, connection)
+                    barcodeCommand.Parameters.AddWithValue("@productId", productId)
+
+                    Using barcodeReader As MySqlDataReader = barcodeCommand.ExecuteReader()
+                        ProductBarcodesTable = New DataTable() ' تهيئة DataTable
+                        ProductBarcodesTable.Load(barcodeReader)
+
+                        ' تعيين مصدر البيانات لـ DataGridView
+                        DataGridViewBarcodes.DataSource = ProductBarcodesTable
+
+
+                    End Using
+                End Using
+            End Using
+
+        Catch ex As Exception
+            MessageBox.Show($"حدث خطأ أثناء تحميل بيانات المنتج: {ex.Message}", "خطأ", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        End Try
+    End Sub
+
+    ' إضافة Event Handler لتنسيق الأسعار أثناء الكتابة
+    Private Sub PriceTextBox_TextChanged(sender As Object, e As EventArgs) Handles TextBoxWholesalePrice.TextChanged,
+                                                                              TextBoxSalePrice1.TextChanged,
+                                                                              TextBoxSalePrice2.TextChanged,
+                                                                              TextBoxCartonPrice.TextChanged
+        Dim textBox As TextBox = DirectCast(sender, TextBox)
+        Dim cursorPosition As Integer = textBox.SelectionStart
+
+        If Not String.IsNullOrWhiteSpace(textBox.Text) Then
+            Dim price As Decimal
+            If Decimal.TryParse(textBox.Text.Replace(" دج", "").Replace(",", ""), price) Then
+                textBox.Text = String.Format("{0:N0}", price) & " دج"
+                textBox.SelectionStart = cursorPosition
+            End If
+        End If
+    End Sub
+
+    ' إضافة Event Handler للتحقق من الكمية
+    Private Sub StockQuantity_KeyPress(sender As Object, e As KeyPressEventArgs) Handles TextBoxStockQuantity.KeyPress
+        If Not Char.IsControl(e.KeyChar) AndAlso Not Char.IsDigit(e.KeyChar) Then
+            e.Handled = True
+        End If
+    End Sub
+
+    Private Function UpdateProduct(connectionString As String, productId As Integer) As Boolean
+        Using connection As New MySqlConnection(connectionString)
+            Dim transaction As MySqlTransaction = Nothing
+            Try
+                connection.Open()
+                transaction = connection.BeginTransaction()
+
+                ' الحصول على الـ ID من ComboBoxes
+                Dim categoryId As Integer? = GetSelectedId(ComboBoxCategories)
+                Dim brandId As Integer = GetSelectedId(ComboBoxBrands)
+                Dim supplierId As Integer = GetSelectedId(ComboBoxSuppliers)
+                Dim unitId As Integer = GetSelectedId(ComboBoxUnits)
+
+                ' التحقق من وجود brand_id في جدول brands
+                Dim brandExistsQuery As String = "SELECT COUNT(*) FROM brands WHERE brand_id = @brandID"
+                Using brandCmd As New MySqlCommand(brandExistsQuery, connection, transaction)
+                    brandCmd.Parameters.AddWithValue("@brandID", brandId)
+                    Dim brandExists As Integer = Convert.ToInt32(brandCmd.ExecuteScalar())
+                    If brandExists = 0 Then
+                        Throw New Exception("The specified brand_id does not exist.")
+                    End If
+                End Using
+
+                ' تحديث المنتج الرئيسي
+                Dim updateQuery As String = "UPDATE products SET " &
+            "product_ref = @productRef, " &
+            "ProductName = @productName, " &
+            "category_id = @categoryID, " &
+            "brand_id = @brandID, " &
+            "SupplierID = @supplierID, " &
+            "unit_id = @unitID, " &
+            "wholesale_price = @wholesalePrice, " &
+            "sale_price_1 = @salePrice1, " &
+            "sale_price_2 = @salePrice2, " &
+            "carton_price = @cartonPrice, " &
+            "StockQuantity = @stockQuantity, " &
+            "is_clothing = @isClothing, " &
+            "is_weight_based = @isWeightBased, " &
+            "is_storable = @isStorable, " &
+            "is_sellable = @isSellable, " &
+            "expiration_date = @expirationDate, " &
+            "warning_days = @warningDays, " &
+            "warning_quantity = @warningQuantity, " &
+            "is_favorite = @isFavorite, " &
+             "updated_by = @updatedBy " &
+            "WHERE ProductID = @productId"
+
+                Using cmd As New MySqlCommand(updateQuery, connection, transaction)
+                    ' البيانات الأساسية
+                    cmd.Parameters.AddWithValue("@productId", productId)
+                    cmd.Parameters.AddWithValue("@productRef", TextBox15.Text.Trim())
+                    cmd.Parameters.AddWithValue("@productName", TextBoxProductName.Text.Trim())
+
+                    ' التصنيفات والعلاقات (الحقول الإلزامية)
+                    cmd.Parameters.AddWithValue("@brandID", brandId)
+                    cmd.Parameters.AddWithValue("@supplierID", supplierId)
+                    cmd.Parameters.AddWithValue("@unitID", unitId)
+                    ' التصنيف يمكن أن يكون فارغاً
+                    cmd.Parameters.AddWithValue("@categoryID", If(categoryId.HasValue, categoryId.Value, DBNull.Value))
+
+                    ' الأسعار
+                    cmd.Parameters.AddWithValue("@wholesalePrice", GetCleanPrice(TextBoxWholesalePrice.Text))
+                    cmd.Parameters.AddWithValue("@salePrice1", GetCleanPrice(TextBoxSalePrice1.Text))
+                    cmd.Parameters.AddWithValue("@salePrice2", If(String.IsNullOrWhiteSpace(TextBoxSalePrice2.Text),
+                DBNull.Value, GetCleanPrice(TextBoxSalePrice2.Text)))
+                    cmd.Parameters.AddWithValue("@cartonPrice", If(String.IsNullOrWhiteSpace(TextBoxCartonPrice.Text),
+                DBNull.Value, GetCleanPrice(TextBoxCartonPrice.Text)))
+
+                    ' الكمية والتحذيرات
+                    cmd.Parameters.AddWithValue("@stockQuantity", Convert.ToInt32(TextBoxStockQuantity.Text))
+                    cmd.Parameters.AddWithValue("@warningDays", If(String.IsNullOrWhiteSpace(TextBoxWarningDays.Text),
+                0, Convert.ToInt32(TextBoxWarningDays.Text)))
+                    cmd.Parameters.AddWithValue("@warningQuantity", If(String.IsNullOrWhiteSpace(TextBoxWarningQuantity.Text),
+                0, Convert.ToInt32(TextBoxWarningQuantity.Text)))
+
+                    ' الخيارات
+                    cmd.Parameters.AddWithValue("@isClothing", If(btnClothing.ToggleState, 1, 0))
+                    cmd.Parameters.AddWithValue("@isWeightBased", If(btnWeightBased.ToggleState, 1, 0))
+                    cmd.Parameters.AddWithValue("@isStorable", If(btnStorable.ToggleState, 1, 0))
+                    cmd.Parameters.AddWithValue("@isSellable", If(btnSellable.ToggleState, 1, 0))
+                    cmd.Parameters.AddWithValue("@isFavorite", If(CheckBoxFavorite.Checked, 1, 0))
+
+                    ' تاريخ الصلاحية
+                    If Not String.IsNullOrWhiteSpace(MaskedTextBoxExpirationDate.Text) Then
+                        Dim expirationDate As DateTime
+                        If DateTime.TryParseExact(MaskedTextBoxExpirationDate.Text, "dd/MM/yyyy", Nothing,
+                Globalization.DateTimeStyles.None, expirationDate) Then
+                            cmd.Parameters.AddWithValue("@expirationDate", expirationDate)
+                        Else
+                            cmd.Parameters.AddWithValue("@expirationDate", DBNull.Value)
+                        End If
+                    Else
+                        cmd.Parameters.AddWithValue("@expirationDate", DBNull.Value)
+                    End If
+
+                    cmd.Parameters.AddWithValue("@updatedBy", MainForm.Label7.Text) ' المستخدم الحالي
+
+                    cmd.ExecuteNonQuery()
+                End Using
+
+                ' تحديث الباركود
+                Using deleteCmd As New MySqlCommand("DELETE FROM ProductBarcodes WHERE ProductID = @productId", connection, transaction)
+                    deleteCmd.Parameters.AddWithValue("@productId", productId)
+                    deleteCmd.ExecuteNonQuery()
+                End Using
+
+                ' إضافة الباركود الجديد
+                If DataGridViewBarcodes.Rows.Count > 0 Then
+                    Dim insertBarcodeQuery As String = "INSERT INTO ProductBarcodes (ProductID, Barcode) " &
+                                         "VALUES (@productId, @barcode)"
+                    Using insertCmd As New MySqlCommand(insertBarcodeQuery, connection, transaction)
+                        For Each row As DataGridViewRow In DataGridViewBarcodes.Rows
+                            If Not row.IsNewRow AndAlso row.Cells("Barcode").Value IsNot Nothing Then
+                                Dim barcode As String = row.Cells("Barcode").Value.ToString().Trim()
+                                If Not String.IsNullOrWhiteSpace(barcode) Then
+                                    insertCmd.Parameters.Clear()
+                                    insertCmd.Parameters.AddWithValue("@productId", productId)
+                                    insertCmd.Parameters.AddWithValue("@barcode", barcode)
+                                    insertCmd.ExecuteNonQuery()
+                                End If
+                            End If
+                        Next
+                    End Using
+                End If
+
+                ' تأكيد التحديثات
+                transaction.Commit()
+                Return True
+
+            Catch ex As Exception
+                ' التراجع عن التحديثات في حالة حدوث خطأ
+                If transaction IsNot Nothing Then
+                    transaction.Rollback()
+                End If
+                MessageBox.Show($"حدث خطأ أثناء تحديث المنتج: {ex.Message}", "خطأ", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                Return False
+            Finally
+                If connection IsNot Nothing AndAlso connection.State = ConnectionState.Open Then
+                    connection.Close()
+                End If
+            End Try
+        End Using
+    End Function
+
+    ' دالة مساعدة للحصول على الـ ID من ComboBox
+    Private Function GetSelectedId(comboBox As ComboBox) As Integer
+        If comboBox.SelectedItem IsNot Nothing Then
+            Return DirectCast(comboBox.SelectedItem, ComboBoxItem).Value
+        Else
+            Return -1 ' أو قيمة افتراضية أخرى إذا لم يتم اختيار عنصر
+        End If
+    End Function
+
+
+    Private Sub BarcodeForm_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+
+        MaskedTextBoxExpirationDate.Mask = "00/00/0000"
+        MaskedTextBoxExpirationDate.ValidatingType = GetType(DateTime)
+        MaskedTextBoxExpirationDate.Visible = False
+        TextBoxWarningDays.Visible = False
+        Label25.Visible = False
+        ComboBoxBrands.DropDownStyle = ComboBoxStyle.DropDownList
+        ComboBoxUnits.DropDownStyle = ComboBoxStyle.DropDownList
+        ComboBoxSuppliers.DropDownStyle = ComboBoxStyle.DropDownList
+        ComboBoxCategories.DropDownStyle = ComboBoxStyle.DropDownList
+
+
+        ' تحديد القناع لصيغة التاريخ (MM/dd/yyyy)
+        UpdateCategoryComboBox()
+
+        ' إعداد DataGridView
+        SetupDataGridView()
+
+        TextBox15.Text = TextBox13.Text
+
+
+    End Sub
+
+    Private Function GenerateUniqueCode() As String
+        Dim newCode As String
+        Dim bytes(7) As Byte ' 8 bytes = 64 bits (enough for a 13-digit number)
+
+        Do
+            _random.GetBytes(bytes)
+            Dim longValue As Long = BitConverter.ToInt64(bytes, 0)
+            ' Ensure the value is positive and within the 13-digit range
+            longValue = Math.Abs(longValue Mod 10000000000000)
+            newCode = longValue.ToString("D13")
+        Loop While GeneratedCodes.Contains(newCode)
+
+        GeneratedCodes.Add(newCode)
+        Return newCode
+    End Function
+    Private Sub PictureBox5_Click(sender As Object, e As EventArgs) Handles PictureBox5.Click
+        Try
+            ' توليد كود عشوائي مكون من 13 رقمًا
+            Dim newCode As String = GenerateUniqueCode()
+
+            ' إضافة الكود إلى DataTable
+            Dim newRow As DataRow = ProductBarcodesTable.NewRow()
+            newRow("Barcode") = newCode
+            ProductBarcodesTable.Rows.Add(newRow)
+
+        Catch ex As Exception
+            MessageBox.Show($"خطأ: {ex.Message}", "خطأ", MessageBoxButtons.OK, MessageBoxIcon.Error)
+        End Try
+    End Sub
+    Private Sub TextBoxInput_KeyPress(sender As Object, e As KeyPressEventArgs) Handles TextBoxInput.KeyPress
+        ' السماح بالأرقام فقط وحظر الأحرف الأخرى
+        If Not Char.IsDigit(e.KeyChar) AndAlso Not Char.IsControl(e.KeyChar) Then
+            e.Handled = True
+        End If
+    End Sub
+
+
+ Private Sub DataGridViewBarcodes_CellContentClick(sender As Object, e As DataGridViewCellEventArgs) Handles DataGridViewBarcodes.CellContentClick
+    Try
+        ' التأكد من أن المستخدم ضغط على زر الحذف
+        If e.ColumnIndex = DataGridViewBarcodes.Columns("DeleteColumn").Index AndAlso e.RowIndex >= 0 Then
+            ' الحصول على فهرس الصف المحدد
+            Dim rowIndex As Integer = e.RowIndex
+
+            ' التحقق من أن الفهرس ضمن النطاق
+            If rowIndex >= 0 AndAlso rowIndex < DataGridViewBarcodes.Rows.Count Then
+                Dim rowToDelete As DataGridViewRow = DataGridViewBarcodes.Rows(rowIndex)
+
+                ' الحصول على قيمة مفتاح الصف (إذا كان هناك مفتاح)
+                Dim barcodeValue As String = rowToDelete.Cells("Barcode").Value.ToString()
+
+                ' حذف الصف من DataTable بناءً على قيمة المفتاح
+                ' التحقق أولاً من وجود المفتاح الأساسي
+                Dim rowToDeleteFromTable As DataRow = Nothing
+                If ProductBarcodesTable.PrimaryKey IsNot Nothing AndAlso ProductBarcodesTable.PrimaryKey.Length > 0 Then
+                    rowToDeleteFromTable = ProductBarcodesTable.Rows.Find(barcodeValue)
+                Else ' إذا لم يكن هناك مفتاح أساسي، استخدم طريقة بديلة للبحث
+                    For Each row As DataRow In ProductBarcodesTable.Rows
+                        If row("Barcode").ToString() = barcodeValue Then
+                            rowToDeleteFromTable = row
+                            Exit For
+                        End If
+                    Next
+                End If
+
+                If rowToDeleteFromTable IsNot Nothing Then
+                    ' حذف الصف من DataTable
+                    ProductBarcodesTable.Rows.Remove(rowToDeleteFromTable)
+
+                    ' حذف الصف من DataGridView
+                    DataGridViewBarcodes.Rows.RemoveAt(rowIndex)
+                End If
+            End If
+
+        ' التأكد من أن المستخدم ضغط على زر التعديل
+        ElseIf e.ColumnIndex = DataGridViewBarcodes.Columns("EditColumn").Index AndAlso e.RowIndex >= 0 Then
+            ' جعل عمود الباركود قابلاً للتعديل
+            If DataGridViewBarcodes.Columns.Contains("Barcode") Then
+                DataGridViewBarcodes.Columns("Barcode").ReadOnly = False
+            End If
+
+            ' تحديد الخلية النشطة
+            DataGridViewBarcodes.CurrentCell = DataGridViewBarcodes.Rows(e.RowIndex).Cells("Barcode")
+
+            ' بدء وضع التحرير للخلية
+            DataGridViewBarcodes.BeginEdit(True)
+        End If
+    Catch ex As Exception
+        ' التعامل مع أي خطأ يحدث أثناء الحذف أو التعديل
+        MessageBox.Show("حدث خطأ: " & ex.Message)
+    End Try
+End Sub
+
+    ' الكود المعدل لـ DataGridViewBarcodes_CellValueChanged
+    Private Sub DataGridViewBarcodes_CellValueChanged(sender As Object, e As DataGridViewCellEventArgs) Handles DataGridViewBarcodes.CellValueChanged
+        Try
+            ' التأكد من أن المستخدم قام بتعديل عمود الباركود
+            If e.ColumnIndex = DataGridViewBarcodes.Columns("Barcode").Index AndAlso e.RowIndex >= 0 Then
+                ' الحصول على الصف الذي تم تعديله
+                Dim changedRow As DataGridViewRow = DataGridViewBarcodes.Rows(e.RowIndex)
+
+                ' الحصول على قيمة الباركود الجديدة
+                Dim newBarcodeValue As String = changedRow.Cells("Barcode").Value?.ToString()
+
+                ' التحقق من أن القيمة الجديدة ليست فارغة
+                If String.IsNullOrEmpty(newBarcodeValue) Then
+                    MessageBox.Show("لا يمكن ترك قيمة الباركود فارغة.")
+                    Return
+                End If
+
+                ' الحصول على قيمة الباركود القديمة من DataTable
+                Dim oldBarcodeValue As String = ""
+                If ProductBarcodesTable.Rows.Count > e.RowIndex Then
+                    oldBarcodeValue = ProductBarcodesTable.Rows(e.RowIndex)("Barcode").ToString()
+                End If
+
+                ' تحديث قيمة الباركود في DataTable
+                ' التحقق أولاً من وجود المفتاح الأساسي
+                If ProductBarcodesTable.PrimaryKey IsNot Nothing AndAlso ProductBarcodesTable.PrimaryKey.Length > 0 Then
+                    Dim rowToUpdate As DataRow = ProductBarcodesTable.Rows.Find(oldBarcodeValue)
+                    If rowToUpdate IsNot Nothing Then
+                        rowToUpdate("Barcode") = newBarcodeValue
+                    End If
+                Else ' إذا لم يكن هناك مفتاح أساسي، استخدم طريقة بديلة للبحث والتعديل
+                    For Each row As DataRow In ProductBarcodesTable.Rows
+                        If row("Barcode").ToString() = oldBarcodeValue Then
+                            row("Barcode") = newBarcodeValue
+                            Exit For
+                        End If
+                    Next
+                End If
+
+                ' جعل عمود الباركود للقراءة فقط مرة أخرى
+                DataGridViewBarcodes.Columns("Barcode").ReadOnly = True
+
+                ' تحديث الصف في DataGridView
+                DataGridViewBarcodes.Refresh()
+            End If
+        Catch ex As Exception
+            ' التعامل مع أي خطأ يحدث أثناء التعديل
+            MessageBox.Show("حدث خطأ أثناء التعديل: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub DataGridViewBarcodes_CellEndEdit(sender As Object, e As DataGridViewCellEventArgs) Handles DataGridViewBarcodes.CellEndEdit
+        ' جعل عمود الباركود للقراءة فقط بعد التعديل
+        If DataGridViewBarcodes.Columns.Contains("Barcode") Then
+            DataGridViewBarcodes.Columns("Barcode").ReadOnly = True
+        End If
+    End Sub
+
+    Private Sub Button4_Click(sender As Object, e As EventArgs) Handles Button4.Click
+        If Not String.IsNullOrEmpty(TextBoxInput.Text) AndAlso IsNumeric(TextBoxInput.Text) Then
+            Dim enteredCode As String = TextBoxInput.Text
+
+            ' إضافة الكود المدخل إلى DataTable
+            Dim newRow As DataRow = ProductBarcodesTable.NewRow()
+            newRow("Barcode") = enteredCode
+            ProductBarcodesTable.Rows.Add(newRow)
+        Else
+            MessageBox.Show("يرجى إدخال رقم صالح في مربع النص.")
+        End If
+    End Sub
+
+
+
+    Private Sub SetupDataGridView()
+        ' إعداد الأعمدة
+
+        ' إضافة عمود للحذف مع الأيقونة
+        Dim deleteColumn As New DataGridViewButtonColumn()
+        deleteColumn.Name = "DeleteColumn"
+        deleteColumn.HeaderText = "حذف"
+        deleteColumn.Text = "حذف"
+        deleteColumn.UseColumnTextForButtonValue = True
+        DataGridViewBarcodes.Columns.Add(deleteColumn)
+
+        ' إضافة عمود للتعديل مع الأيقونة
+        Dim editColumn As New DataGridViewButtonColumn()
+        editColumn.Name = "EditColumn"
+        editColumn.HeaderText = "تعديل"
+        editColumn.Text = "تعديل"
+        editColumn.UseColumnTextForButtonValue = True
+        DataGridViewBarcodes.Columns.Add(editColumn)
+
+        DataGridViewBarcodes.Columns("DeleteColumn").Width = 85
+        DataGridViewBarcodes.Columns("EditColumn").Width = 85
+
+        ' إعداد DataGridView
+        DataGridViewBarcodes.AllowUserToAddRows = False
+        DataGridViewBarcodes.RowTemplate.Height = 25
+        DataGridViewBarcodes.Columns("DeleteColumn").Width = 45
+        DataGridViewBarcodes.Columns("EditColumn").Width = 45
+
+        ' التحقق من وجود عمود الباركود قبل الوصول إليه
+        If DataGridViewBarcodes.Columns.Contains("Barcode") Then
+            DataGridViewBarcodes.Columns("Barcode").HeaderText = "كود الباركود"
+            DataGridViewBarcodes.Columns("Barcode").Width = 135
+            ' جعل عمود الباركود للقراءة فقط
+            DataGridViewBarcodes.Columns("Barcode").ReadOnly = True
+            ' التأكد من أن نوع البيانات هو String
+            DataGridViewBarcodes.Columns("Barcode").ValueType = GetType(String)
+            ' التأكد من أن التنسيق ليس فارغًا
+            DataGridViewBarcodes.Columns("Barcode").DefaultCellStyle.Format = ""
+            ' التأكد من أن قيمة Null ليست فارغة
+            DataGridViewBarcodes.Columns("Barcode").DefaultCellStyle.NullValue = ""
+        End If
+        If ProductBarcodesTable IsNot Nothing AndAlso ProductBarcodesTable.Columns.Contains("Barcode") Then
+            ProductBarcodesTable.PrimaryKey = New DataColumn() {ProductBarcodesTable.Columns("Barcode")}
+        End If
+        ' إضافة حدث عند الضغط على الأزرار (حذف وتعديل)
+        AddHandler DataGridViewBarcodes.CellContentClick, AddressOf DataGridViewBarcodes_CellContentClick
+    End Sub
+
+
+
+
+
+    Private Sub Button11_Click(sender As Object, e As EventArgs) Handles Button11.Click
+        TextNp.Text -= 1
+    End Sub
+
+    Private Sub Button10_Click(sender As Object, e As EventArgs) Handles Button10.Click
+        TextNp.Text += 1
+    End Sub
+
+
+
+    Private Sub Button8_Click(sender As Object, e As EventArgs) Handles Button8.Click
+        addcat.ShowDialog()
+    End Sub
+
+    Private Sub Button5_Click(sender As Object, e As EventArgs) Handles Button5.Click
+        brand.ShowDialog()
+    End Sub
+
+    Private Sub Button6_Click(sender As Object, e As EventArgs) Handles Button6.Click
+        unit.ShowDialog()
+    End Sub
+
+    Private Sub MaskedTextBoxExpirationDate_Enter(sender As Object, e As EventArgs) Handles MaskedTextBoxExpirationDate.Enter
+
+        MaskedTextBoxExpirationDate.SelectAll()
+    End Sub
+
+    Private Sub ProfessionalToggleButton1_Click(sender As Object, e As EventArgs) Handles ProfessionalToggleButton1.Click
+        If ProfessionalToggleButton1.ToggleState = False Then
+            MaskedTextBoxExpirationDate.Visible = False
+            TextBoxWarningDays.Visible = False
+            Label25.Visible = False
+        Else
+            MaskedTextBoxExpirationDate.Visible = True
+            TextBoxWarningDays.Visible = True
+            Label25.Visible = True
+            MaskedTextBoxExpirationDate.Focus()
+        End If
+    End Sub
+
+    Private Sub ButtonUploadImage_Click(sender As Object, e As EventArgs) Handles ButtonUploadImage.Click
+        ' فتح نافذة لاختيار الصورة
+        Dim openFileDialog As New OpenFileDialog()
+        openFileDialog.Filter = "Image Files|*.jpg;*.jpeg;*.png;*.bmp;*.gif"
+        If openFileDialog.ShowDialog() = DialogResult.OK Then
+            ' عرض الصورة في PictureBox
+            PictureBoxProductImage.Image = Image.FromFile(openFileDialog.FileName)
+            ' تخزين المسار الكامل للصورة
+            TextBoxImagePath.Text = openFileDialog.FileName
+        End If
+    End Sub
+
+    Private Sub TextBoxWholesalePrice_TextChanged(sender As Object, e As EventArgs) Handles TextBoxWholesalePrice.TextChanged
+        If String.IsNullOrEmpty(TextBoxWholesalePrice.Text) Then Return
+
+        Try
+            ' حذف كل شيء ما عدا الأرقام
+            Dim numericValue As String = New String(TextBoxWholesalePrice.Text.Where(Function(c) Char.IsDigit(c)).ToArray())
+
+            If String.IsNullOrEmpty(numericValue) Then
+                TextBoxWholesalePrice.Text = "0 دج"
+                ' تحديد الرقم فقط
+                TextBoxWholesalePrice.Select(0, TextBoxWholesalePrice.Text.Length - 3)
+                Return
+            End If
+
+            ' تحويل إلى رقم
+            Dim price As Decimal = Decimal.Parse(numericValue)
+
+            ' تجنب التكرار إذا كان النص يحتوي بالفعل على التنسيق الصحيح
+            If Not TextBoxWholesalePrice.Text.EndsWith(" دج") Then
+                TextBoxWholesalePrice.Text = String.Format("{0:N0} دج", price)
+                ' تحديد الرقم فقط (كل شيء ما عدا " دج")
+                TextBoxWholesalePrice.Select(0, TextBoxWholesalePrice.Text.Length - 3)
+            End If
+
+        Catch ex As Exception
+            TextBoxWholesalePrice.Text = "0 دج"
+            TextBoxWholesalePrice.Select(0, 1)
+        End Try
+    End Sub
+
+    Private Sub TextBoxSalePrice1_TextChanged(sender As Object, e As EventArgs) Handles TextBoxSalePrice1.TextChanged
+        If String.IsNullOrEmpty(TextBoxSalePrice1.Text) Then Return
+
+        Try
+            ' حذف كل شيء ما عدا الأرقام
+            Dim numericValue As String = New String(TextBoxSalePrice1.Text.Where(Function(c) Char.IsDigit(c)).ToArray())
+
+            If String.IsNullOrEmpty(numericValue) Then
+                TextBoxSalePrice1.Text = "0 دج"
+                ' تحديد الرقم فقط
+                TextBoxSalePrice1.Select(0, TextBoxSalePrice1.Text.Length - 3)
+                Return
+            End If
+
+            ' تحويل إلى رقم
+            Dim price As Decimal = Decimal.Parse(numericValue)
+
+            ' تجنب التكرار إذا كان النص يحتوي بالفعل على التنسيق الصحيح
+            If Not TextBoxSalePrice1.Text.EndsWith(" دج") Then
+                TextBoxSalePrice1.Text = String.Format("{0:N0} دج", price)
+                ' تحديد الرقم فقط (كل شيء ما عدا " دج")
+                TextBoxSalePrice1.Select(0, TextBoxSalePrice1.Text.Length - 3)
+            End If
+
+        Catch ex As Exception
+            TextBoxSalePrice1.Text = "0 دج"
+            TextBoxSalePrice1.Select(0, 1)
+        End Try
+    End Sub
+
+    ' أضف أيضاً هذه الأحداث للتعامل مع التركيز
+    Private Sub TextBoxWholesalePrice_GotFocus(sender As Object, e As EventArgs) Handles TextBoxWholesalePrice.GotFocus
+        ' تحديد النص بأكمله ما عدا العملة عندما يحصل التيكست بوكس على التركيز
+        TextBoxWholesalePrice.Select(0, TextBoxWholesalePrice.Text.Length - 3)
+    End Sub
+
+    Private Sub TextBoxSalePrice1_GotFocus(sender As Object, e As EventArgs) Handles TextBoxSalePrice1.GotFocus
+        ' تحديد النص بأكمله ما عدا العملة عندما يحصل التيكست بوكس على التركيز
+        TextBoxSalePrice1.Select(0, TextBoxSalePrice1.Text.Length - 3)
+    End Sub
+
+    Private Sub TextBoxWholesalePrice_MouseUp(sender As Object, e As MouseEventArgs) Handles TextBoxWholesalePrice.MouseUp
+        ' منع إلغاء تحديد النص عند النقر
+        If TextBoxWholesalePrice.SelectionLength = 0 Then
+            TextBoxWholesalePrice.Select(0, TextBoxWholesalePrice.Text.Length - 3)
+        End If
+    End Sub
+
+    Private Sub TextBoxSalePrice1_MouseUp(sender As Object, e As MouseEventArgs) Handles TextBoxSalePrice1.MouseUp
+        ' منع إلغاء تحديد النص عند النقر
+        If TextBoxSalePrice1.SelectionLength = 0 Then
+            TextBoxSalePrice1.Select(0, TextBoxSalePrice1.Text.Length - 3)
+        End If
+    End Sub
+
+End Class
